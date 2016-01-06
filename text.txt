@@ -1,0 +1,762 @@
+Clazz.createPackage("com.photon");
+
+Clazz.com.photon.StaffingActualPlanContentController = Clazz.extend(Clazz.WidgetWithTemplate, {
+	defaultContainer : "overview\\:content_controller_container",
+	templateUrl : "../../template/overview_staffing_actual_plan_content_controller.tmp",
+	mergeCells : [],
+	planValue : [],
+	tableWidth : 650,
+	projectId : null,
+	projectName : null,
+	onLoadPage : null,
+	staffingActPlanResponse : null,
+	jiraAPI : null,
+	dashboardSpinner : null,
+	hasSuggestionList : false,
+	cellStaffingActualClick : null,
+	TOTAL_COUNT_ROW_INDEX : 11,
+	ACTUAL_HEADER_ROW_INDEX : 12,
+	ACTUAL_ROLE_TITLE_ROW_INDEX : 14,
+	PLAN_HEADER_ROW_INDEX : 0,
+	totalTableRow : 0,
+	totalTableColum: 0,
+	projectName : null,
+    
+    initialize: function(config) {
+    	this.projectId = config.projectId;
+    	this.projectName = config.projectName;
+    	this.onLoadPage = new signals.Signal();
+    	this.cellStaffingActualClick = new signals.Signal();
+    	this.jiraAPI = new Clazz.com.photon.JiraAPI();
+    	this.dashboardSpinner = new Clazz.com.photon.DashboardSpinner();
+    	this.dashboardDialog = new Clazz.com.photon.DashboardDialog();
+    	this.mergeCells = [];
+    	this.planValue = [];
+    	this.isSave = false;
+    },
+    
+    preRender: function(whereToRender, renderFunction) {
+    	if (this.projectId !== null) {
+    		this.onLoadPage.dispatch(this.projectId);
+    	}
+    	this.data = this.getTableData();
+    	renderFunction(this.data, whereToRender);
+    },
+    
+    getMerge : function(rowIndex, colIndex, rowSpan, colSpan){
+        var merge = {};
+        merge.row = rowIndex;
+        merge.col = colIndex;
+        merge.rowspan = rowSpan;
+        merge.colspan = colSpan;
+        return merge;
+    },
+    
+    setData : function(response){
+    	this.staffingActPlanResponse = response;
+    	//add column
+    	this.data = [];
+    	var colHeadersStr = [];
+    	var colHeaders = this.staffingActPlanResponse.colHeaders;
+    	for(var i = 0 ; i < colHeaders.length ; i++) {
+    		colHeadersStr.push(colHeaders[i].columnName);
+    		if(i > 0){
+    			colHeadersStr.push('icon');
+    		}
+    	}
+    	this.data.push(colHeadersStr);
+    	
+    	//add data
+    	var count = [];
+    	this.planValue = [];
+    	if (this.projectId != "") {
+	    	for (var i = 0 ; i < this.staffingActPlanResponse.plan.length ; i++) {
+	    		var plan = this.staffingActPlanResponse.plan[i];
+	    		var planIcon = [];
+	    		planIcon.push(plan.roleName);
+	    		for (var j = 0 ; j < plan.roleColumns.length ; j++) {
+	        		var roleColumns = plan.roleColumns[j];
+	        		var columnsValue = roleColumns.columnsValue;
+	        		planIcon.push(columnsValue);
+	        		this.planValue.push(columnsValue);
+	        		planIcon.push("icon");
+    				if(count.length < plan.roleColumns.length){
+    					count.push( Math.ceil(columnsValue) );
+    				}else {
+    					count[j-1] = Math.ceil(count[j-1])+Math.ceil(columnsValue);
+    				}
+
+	        	}
+	    		this.data.push(planIcon);
+	        	
+	    	}
+    	}
+    	var totalCount = ['Total Count'];
+    	var countPlan = [];
+    	for(var i = 0; i< count.length ; i++){
+    		totalCount.push(count[i]);
+    		totalCount.push(0);
+    		//to add column length totalcountpeople 
+    		countPlan.push(0);
+    	}
+    	var emptyRow = [];
+
+        var staffingActual = ['Staffing Actual'];
+        var columnNamePlan = ['<column name>'];
+        var totalCountPlan = ['Total Count'];
+        
+        this.data.push(totalCount);
+        this.data.push(emptyRow);
+        this.data.push(staffingActual);
+        this.data.push(colHeadersStr);
+        
+        var getMaxPlanValue = this.getMaxValue(this.planValue);
+        if (this.projectId != "") {
+	        var actualData = this.parsingActualData(response);
+	        for(var i = 0 ; i < actualData.length ; i++){
+	        	this.data.push(actualData[i]);
+	        	var index=0;
+	        	for(var j=0; j<actualData[i].length; j++){
+	        		if(j%2){
+	        			if(actualData[i][j] != "select member" && actualData[i][j] != ""){
+	        				countPlan[index] = countPlan[index]+1;
+	        				index++;
+	        			}
+	            	}
+	        	}		    	
+	        }
+        }
+        for(var i = 0; i < countPlan.length;i++){
+        	totalCountPlan.push(countPlan[i]);
+        	totalCountPlan.push(0);
+        }
+        this.data.push(totalCountPlan);
+        this.setTotalTableRowAndTableColum(response);
+
+		if (this.projectId != "" && getMaxPlanValue == 0){
+			$(".staff-actual-search-project-warning").css('display','block');
+			$("#waringStaffingActual").text('You don\'t have any plans to be displayed yet. You can start creating new plan on the table below.');
+		}
+    },
+    
+    getMaxValueActual : function(response, roleName){
+    	var maxValue = 0.0;
+    	for (var i = 0 ; i < response.plan.length ; i++) {
+    		var planItem = response.plan[i];
+    		if (planItem.roleName == roleName) {
+    			for(var n = 0 ; n < planItem.roleColumns.length ; n++){
+    				var columnsValue = planItem.roleColumns[n].columnsValue;
+    				maxValue = (parseFloat(columnsValue) < maxValue) ? maxValue : parseFloat(columnsValue);
+    			}
+    		}
+    	}
+    	return Math.ceil(maxValue);
+    },
+    
+    parsingActualData : function(response){
+    	var actualData = [];
+    	for (var i = 0 ; i < response.plan.length ; i++) {
+    		var actual = response.actual[i];
+    		var plan = response.plan[i];
+    		var roleName = plan.roleName;
+    		var actualDataArray = [];
+    		actualDataArray.push(roleName);
+    		var maxValueActual = this.getMaxValueActual(response, roleName);
+    		var additionalRowCount = (maxValueActual > 0) ? maxValueActual : 1;
+    		for (var n = 0 ; n < additionalRowCount ; n++) {
+    			for (var j = 1 ; j < response.colHeaders.length ; j++) {
+    				var roleColumn = (actual) ? actual.roleColumns[j-1] : undefined;
+    				var memberName = (roleColumn && roleColumn.columnList[n]) ? (roleColumn.columnList[n].firstName + ' ' + roleColumn.columnList[n].lastName) : (maxValueActual == 0) ? 'bla' : 'select member';
+    				var planValueStr = plan.roleColumns[j-1].columnsValue;
+    				var planValueFloat = parseFloat(planValueStr);
+    				var planValueCeil = Math.ceil(planValueFloat);
+    				if(n < planValueCeil) {
+    					actualDataArray.push(memberName);
+        				actualDataArray.push('<img class="project-overview-icon-edit" src="../../images/edit.png" />');
+    				} else {
+    					actualDataArray.push('');
+    					actualDataArray.push('');
+    				}
+    				
+    			}
+    			actualData.push(actualDataArray);
+    			actualDataArray = [];
+    			actualDataArray.push("");
+    		}
+    	}
+    	return actualData;
+    },
+    
+   handleCloneTableFrezing : function () {
+		$(".ht_clone_top").remove();
+		$(".ht_clone_left").remove();  
+   },
+    
+    getTableData : function() {
+    	this.tableData = [];
+    	var roleTeam = ['Role/Team'];
+        var pmArray = ['PM'];
+        var baArray = ['BA'];
+        var onsiteBaArray = ['Onsite BA'];
+        var developerArray = ['Developer (IOS, Android, Service)'];
+        var onsiteDevArray = ['Onsite Developer'];
+        var techLeadArray = ['Tech Lead'];
+        var qaLeadArray = ['QA Lead'];
+        var creativeOnsiteArray = ['UX/UI (Creative Onsite)'];
+        var creativeOffshoreArray = ['UX/UI (Creative Offshore)'];
+        var qaArray = ['QA'];
+        var totalCount = ['Total Count'];
+        
+        var staffingActual = ['Staffing Actual'];
+        var roleTeamPlan = ['Role/Team'];
+        var columnNamePlan = ['<column name>'];
+        var totalCountPlan = ['Total Count'];
+        
+        roleTeamPlan.push(columnNamePlan);
+        
+        var columnName = ['<column name>'];
+        roleTeam.push(columnName);
+        
+        
+        this.tableData.push(totalCount);
+        this.tableData.push(staffingActual);
+        this.tableData.push(roleTeamPlan);
+        this.tableData.push(totalCountPlan);
+        return this.tableData;
+	},
+	
+	getMaxValue : function(Array){
+		var biggestNum = 0;
+		for(var i=0; i< Array.length; i++){
+		    if(Math.ceil(Array[i]) > biggestNum){
+		        biggestNum = Math.ceil(Array[i]);
+		     }
+		}
+		return biggestNum;
+	},
+	
+	
+	mergeTable : function(){
+		this.mergeCells = [];
+		var colHeaders = this.staffingActPlanResponse.colHeaders;
+		for (var i = 0; i < colHeaders.length ; i++) {
+			var columnIndex = (i * 2) + 1;
+			var planHeaderRowMerge = this.getMerge(this.PLAN_HEADER_ROW_INDEX, columnIndex , 1, 2);
+			this.mergeCells.push(planHeaderRowMerge);
+			
+			var totalCountRowMerge = this.getMerge(this.TOTAL_COUNT_ROW_INDEX, columnIndex , 1, 2);
+			this.mergeCells.push(totalCountRowMerge);
+			
+			var actualHeaderRowMerge = this.getMerge(this.ACTUAL_HEADER_ROW_INDEX, columnIndex , 1, 2);
+			this.mergeCells.push(actualHeaderRowMerge);
+			
+			var actualRoleTitleRowMerge = this.getMerge(this.ACTUAL_ROLE_TITLE_ROW_INDEX, columnIndex , 1, 2);
+			this.mergeCells.push(actualRoleTitleRowMerge);
+		}
+		
+		var actual = this.staffingActPlanResponse.actual;
+	
+		//columnLength used to count number of column
+		var columnLength = 0;
+		for (var i = 0 ; i < actual.length ; i++) {
+			if( i < 10 ){
+				columnLength =actual[i].roleColumns.length;
+				var rowIndex = i + 1;
+				for (var n = 0; n < colHeaders.length ; n++) {
+					var columnIndex = (n * 2) + 1;
+					var merge = this.getMerge(rowIndex, columnIndex , 1, 2);
+					this.mergeCells.push(merge);
+				}
+			}
+		}
+		
+		columnLength = (columnLength*2) + 1;
+		this.mergeCells.push(this.getMerge(12, 0, 1, columnLength));
+		this.mergeCells.push(this.getMerge(13, 0, 1, columnLength));
+	   
+       for(var j=1; j<this.totalTableColum; j++){
+        	this.mergeCells.push(this.getMerge(this.totalTableRow, j, 1,2));
+        	 j++;
+    	}
+	},
+	
+	setTotalTableRowAndTableColum : function(response){
+        var actualData = this.parsingActualData(response);  
+        this.totalTableRow = 15 + actualData.length ;
+        this.totalTableColum = actualData[0].length;
+	},
+		
+	showTable : function() {
+		//empty the container to make sure there is no old table before render table again.
+		$('.staff-table-container').empty();
+		var self = this;
+		this.mergeTable();
+		var container = document.getElementById('staffActualPlanTable');
+		this.handsontableActual = new Handsontable(container, {
+			data: self.data,
+		    height: 650,
+		    width: this.staffingActPlanResponse.colHeaders.length > 2 ? this.tableWidth : 450,
+		    stretchH: 'all',
+		    colHeaders: false,
+		    rowHeaders: false,
+		    columnSorting: true,
+		    contextMenu: true,
+		    mergeCells: self.mergeCells,
+		    fixedColumnsLeft:1
+		});
+		
+		//Not editable first column
+		this.handsontableActual.updateSettings({
+			cells: function (row, col, prop) {
+				var cellProperties = {};
+
+				if (self.handsontableActual.getData()[col][prop] === 'Role/Team') {
+					cellProperties.readOnly = true;
+				} else if (self.handsontableActual.getData()[col][prop] === 'icon') {
+					cellProperties.renderer = 'html';
+					cellProperties.readOnly = true;
+				} else {
+					cellProperties.readOnly = false;
+					cellProperties.type = 'numeric';
+					cellProperties.format = '0.00';
+				}
+
+				return cellProperties;
+			}
+		});
+		this.handsontableActual.addHook('afterOnCellMouseDown', function(event, coords, TD) {
+			var row = coords.row;
+            var col = coords.col;
+            var top = event.realTarget.y + 25;
+    		var left = event.realTarget.x - 203;
+    		var plan = self.staffingActPlanResponse.plan;
+    		if(row > plan.length + 3 && col > 0 && col % 2 == 0){
+    			var columnIndexName = col-1;
+    			var oldValue = self.handsontableActual.getDataAtCell(row, columnIndexName);
+    			self.showMenu(top, left, row, columnIndexName, oldValue);
+    		}
+        });
+		
+		this.handsontableActual.addHook('afterChange', function(changes, source) {
+			var change = changes[0];
+            var newValue = change[3];
+            var oldValue = change[2];
+            var rowIndex = change[0];
+            var colIndex = parseInt(change[1]);
+            var plan =  self.staffingActPlanResponse.plan;
+			if (rowIndex > 0 && rowIndex <= plan.length && newValue < 1 && newValue !== 0.25 && newValue !== 0.5 && newValue !== 0.0) {
+				self.handsontableActual.undo();
+				self.dashboardDialog.data.title = 'Alert!';
+				self.dashboardDialog.data.btnTextOk = 'Ok';
+				self.dashboardDialog.data.message = 'Please fill with 0.25 or 0.5 for less than 1.';
+				self.dashboardDialog.showAlertNotification('OK', function(){
+	    			self.dashboardDialog.hidePopUp();
+	    		});
+			} else {
+				if(rowIndex > 0 && rowIndex <= plan.length){
+					self.updateDataPlan(self.staffingActPlanResponse, rowIndex, colIndex, newValue);
+				}
+				if(rowIndex == 0 && rowIndex == 0){
+					var colHeaders = self.staffingActPlanResponse.colHeaders;
+					var colHederValue = 0;
+					for(var i=0 ; i<colHeaders.length ; i++){
+						if(newValue.localeCompare(colHeaders[i].columnName.toLowerCase())==0){
+							colHederValue++;
+						}
+					}
+					
+					if(colHederValue>0){
+						self.handsontableActual.undo();
+						self.dashboardDialog.data.title = 'Alert!';
+						self.dashboardDialog.data.btnTextOk = 'Ok';
+						self.dashboardDialog.data.message = 'Column name cannot be same';
+						self.dashboardDialog.showAlertNotification('OK', function(){
+			    			self.dashboardDialog.hidePopUp();
+			    			colHederValue = 0;
+			    		});
+					}else{
+						self.updateDataColumn(self.staffingActPlanResponse, colIndex, newValue);
+					}
+				}
+				self.handsontableActual.selectCell(rowIndex, colIndex);
+				self.isSave = true;
+				if (this.projectId != "" && self.getMaxValue(self.planValue) == 0){
+					$(".staff-actual-search-project-warning").css('display','block');
+					$("#waringStaffingActual").text('You don\'t have any plans to be displayed yet. You can start creating new plan on the table below.');
+				}else{
+					$(".staff-actual-search-project-warning").css('display','none');
+				}
+
+			}
+		});
+		
+		this.handsontableActual.addHook('afterRenderer', function(td, row, col, prop, value, cellProperties) {
+			var rowIndex = 15;		
+			if (self.projectId == ""){
+				var j = 5;
+				if(row == 1 || row == 4){
+					td.style.background = '#414141';
+					td.style.color = 'white';
+				}else{
+					td.style.background = 'white';
+				}
+			}else{
+				var j = 11;
+			}
+			
+			for(var i = 1; i < j ;i++){	
+			   var maxValue = 0;
+			   if(self.getMaxValue(self.data[i]) == 0){
+				   maxValue = 1;
+			   }else {
+				   maxValue = self.getMaxValue(self.data[i]);
+			   }
+				if(row >= rowIndex && row < rowIndex + maxValue){
+					if(i%2 == 0){
+						td.style.background = 'white';
+					}else {
+						td.style.background = '#eaeaea';
+					}
+				}
+				rowIndex=rowIndex + maxValue	;
+			}
+			
+			if(row == self.data.length-1){
+				td.style.background = '#414141';
+				td.style.color = 'white';
+			}
+        });
+		
+		//this.handsontableActual.addHook('afterRender', function(isForced) {
+		//	$('.htCore tbody tr:nth-child('+self.data.length+') td').addClass('header-black');
+        //});
+
+		this.handsontableActual.addHook('afterRenderer', function(td, row, col, prop, value, cellProperties) {
+			if (value == 'select member') {
+				td.style.color = '#686868';
+				td.style.fontStyle = 'italic';
+			}
+        });
+	},
+	
+	refresh : function(newStaffingActPlanResponse){
+		if (newStaffingActPlanResponse !== null) {
+			this.setData(newStaffingActPlanResponse);
+			this.setTotalTableRowAndTableColum(newStaffingActPlanResponse);
+			this.handleCloneTableFrezing();
+			this.showTable();
+		}
+	},
+	
+	showMenu : function(top, left, row, col, oldValue){
+		this.cellStaffingActualClick.dispatch(top, left, this.projectId, row, col, oldValue);
+	},
+	
+	updateDataPlan : function(staffingActPlanResponse, rowIndex, colIndex, newValue){
+		var planSelected = staffingActPlanResponse.plan[rowIndex - 1];
+		planSelected[colIndex - parseInt(colIndex / 2)] = newValue + '';
+		this.refresh(staffingActPlanResponse);
+	},
+	
+	updateDataColumn : function(staffingActPlanResponse, colIndex, newValue) {
+		var colHeader = staffingActPlanResponse.colHeaders[colIndex - parseInt(colIndex / 2)];
+		colHeader.columnName = newValue;
+	},
+	
+	updateDataAct : function(staffingActPlanResponse, rowIndex, colIndex, oldValue, selectedMember){
+		var roleName = '';
+		while(roleName == ''){
+			roleName = this.handsontableActual.getDataAtCell(rowIndex, 0);
+			rowIndex--;
+		}
+		var colName = this.handsontableActual.getDataAtCell(0, colIndex);
+		var actual = staffingActPlanResponse.actual;
+		var newFirstName = (selectedMember !== null) ? selectedMember.firstname : null;
+		var newLastName = (selectedMember !== null) ? selectedMember.lastname : null;
+		var employeeId = (selectedMember !== null) ? selectedMember.employeeId : null;
+		
+		for (var i = 0 ; i < actual.length ; i++) {
+			var actualItem = actual[i];
+			for (var n = 0 ; n < actualItem.roleColumns.length && (actualItem.roleName == roleName) ; n++) {
+				var roleColumn = actualItem.roleColumns[n];
+				var columnName = roleColumn.columnName;
+				var columnList = roleColumn.columnList;
+				
+				if(oldValue == 'select member' && columnName == colName) {
+					var newMember = {};
+					newMember.firstName = newFirstName;
+					newMember.lastName = newLastName;
+					newMember.isUpdated = true;
+					newMember.employeeId = employeeId;
+					columnList.push(newMember);
+				} else {
+					var hasBeenUpdated = false;
+					for (var z = 0 ; z < columnList.length && (columnName == colName) && !hasBeenUpdated ; z++) {
+						var columnItem = columnList[z];
+						var firstName = columnItem.firstName;
+						var lastName = columnItem.lastName;
+						var fullName = firstName + ' ' + lastName;
+						columnItem.isUpdated = (fullName == oldValue);
+						if (fullName == oldValue) {
+							hasBeenUpdated = true;
+							if(selectedMember == null){
+								columnList.splice(z, 1);
+							} else {
+								columnItem.firstName = newFirstName;
+								columnItem.lastName = newLastName;
+								columnItem.employeeId = employeeId;
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		this.refresh(staffingActPlanResponse);
+	},
+
+	failedGetSuggestionList : function(response) {
+		this.dashboardSpinner.hideSpinner();
+	},
+	
+	suggestionList : function(suggestionListResponse){
+		var suggestionListStr = [];
+		if (suggestionListResponse) {
+			for (var i = 0 ; i < suggestionListResponse.length ; i++) {
+				var suggestionItem = suggestionListResponse[i];
+				var projectId = suggestionItem.projectId;
+				var projectName = suggestionItem.projectName;
+				suggestionListStr.push(projectId + ' - ' + projectName);
+			}
+		}
+		$( "#staffActualSearchProjectInput" ).autocomplete({
+		      source: suggestionListStr
+		});
+	},
+	
+	showErrorMessage : function(){
+		$("#staffActualSearchProjectInput").addClass("staff-actual-search-project-error");
+		$(".staff-actual-search-project-inline-error").show();
+	},
+	
+	hideErrorMessage : function() {
+		$("#staffActualSearchProjectInput").removeClass("staff-actual-search-project-error");
+		$(".staff-actual-search-project-inline-error").hide();
+	},
+	
+	setHeaderTitle : function(title){
+		$('.staff-actual-project-name-label').text(title);
+	},
+	
+	bindUI : function() {
+		this.setHeaderTitle(this.projectName);
+		var self = this;
+		if (this.projectId == "") {
+			$(".staff-actual-search-project-warning").css('display','inherit');
+			$("#staffActualPlanMinusBtn").css('display','none');
+			$("#staffActualPlanPlusBtn").css('display','none');
+			self.setHeaderTitle("<no project selected>");
+		}else{
+			self.setHeaderTitle(this.projectName);
+		}
+		
+		$("#staffActualSearchProjectBtn").click(function(){
+			if(self.isSave == true && self.projectId){
+				self.dashboardDialog.data.title = 'Confirmation';
+				self.dashboardDialog.data.btnTextOk = 'Yes';
+				self.dashboardDialog.data.btnTextCancel = 'No';
+				self.dashboardDialog.data.message = 'Discharge changes ?';
+				self.dashboardDialog.showAlertConfirmation('Yes', 'No', function(){
+					self.handleCloneTableFrezing();
+					self.dashboardDialog.hidePopUp();
+				}, function(){
+					self.handleCloneTableFrezing();
+					self.dashboardDialog.hidePopUp();
+				});
+			}
+
+            var searchVal = $("#staffActualSearchProjectInput").val();
+            var indexOfNegasi = searchVal.indexOf('-');
+            self.projectId = parseInt(searchVal.substring(0, indexOfNegasi - 1)) + '';
+            var projectName = searchVal.substring(indexOfNegasi + 1);
+            self.setHeaderTitle(projectName);
+            if (!isNaN(self.projectId)) {
+            	self.hideErrorMessage();
+            	self.onLoadPage.dispatch(self.projectId);
+				$("#staffActualPlanMinusBtn").css('display','inline-block');
+    			$("#staffActualPlanPlusBtn").css('display','inline-block');
+    			$(".staff-actual-search-project-warning").css('display','none');
+            } else {
+            	self.showErrorMessage();
+            	
+            }
+        });
+		
+		$("#staffActualSearchProjectInput").on('focus', function() {
+			var searchVal = $("#staffActualSearchProjectInput").val();
+			self.staffingActPlanResponse = null;
+				self.jiraAPI.request(document.jsonConfig.presentationServiceHost + document.jsonConfig.dashboard + "/suggestion_list?projectId=" + searchVal, "GET", "", 
+					function(response){
+					self.hasSuggestionList = true;
+					var suggestionListResponse = response.projectSuggestionList;
+					self.suggestionList(suggestionListResponse);
+				}, function(response){
+					self.hasSuggestionList = false;
+					self.failedGetSuggestionList(response);
+				});
+		});
+		
+		$("#staffingActualPlanSaveBtn").click(function(){
+            self.saveActualPlan();
+            self.isSave = false;
+        });
+		
+		$("#staffActualPlanMinusBtn").click(function(){
+			if(self.staffingActPlanResponse.colHeaders.length < 6){
+				self.tableWidth = self.tableWidth - 297;
+			}
+			self.handleCloneTableFrezing();
+			if(self.tableWidth < 420){
+				self.tableWidth = 420;
+			}
+			self.removePlan();
+		});
+
+		$("#staffActualPlanPlusBtn").click(function() {
+			self.tableWidth = self.tableWidth + 297;
+			self.handleCloneTableFrezing();
+			if(self.tableWidth > 1100){
+				self.tableWidth = 1100;
+			}
+			self.addNewPlan();
+		});
+		
+		$("#summary").click(function(){
+			if(self.isSave == true){
+				self.dashboardDialog.data.title = 'Confirmation';
+				self.dashboardDialog.data.btnTextOk = 'Yes';
+				self.dashboardDialog.data.btnTextCancel = 'No';
+				self.dashboardDialog.data.message = 'Discharge changes ?';
+				self.dashboardDialog.showAlertConfirmation('Yes', 'No', function(){
+					self.dashboardDialog.hidePopUp();
+				}, function(){
+					self.dashboardDialog.hidePopUp();
+				});
+			}else{
+				location.reload();
+			}
+		});
+	},
+	
+	removePlan : function() {
+		if(this.staffingActPlanResponse.colHeaders.length > 2){
+			this.decreasePlan();
+			this.setData(this.staffingActPlanResponse);
+			this.showTable();
+		}else{
+			this.decreasePlan();
+			this.addNewPlan();
+		}
+	},
+	
+	decreasePlan : function() {
+		this.staffingActPlanResponse.colHeaders.pop();
+		
+		var plan = this.staffingActPlanResponse.plan;
+		for(var i = 0 ; i < plan.length ; i++) {
+			var planItem = plan[i];
+			planItem.roleColumns.pop();
+		}
+		
+		var actual = this.staffingActPlanResponse.actual;
+		for (var i = 0 ; i < actual.length ; i++) {
+			var actualItem = actual[i];
+			actualItem.roleColumns.pop();
+		}
+	},
+	
+	addNewPlan : function() {
+		var newColHeaders = {};
+		newColHeaders.columnId = null;
+		newColHeaders.columnName = '<column name>';
+		this.staffingActPlanResponse.colHeaders.push(newColHeaders);
+		
+		var plan = this.staffingActPlanResponse.plan;
+		for(var i = 0 ; i < plan.length ; i++) {
+			var planItem = plan[i];
+			for(var j = 0 ; j < planItem.roleColumns.length ; j++){
+				var roleColumn = planItem.roleColumns;
+				var roleColumnObject = {
+					"columnsName" : "<column name>",
+					"columnsValue" : "0.0",
+					"isUpdated" : true
+				}
+			}
+			planItem.roleColumns.push(roleColumnObject);
+		}
+		
+		var actual = this.staffingActPlanResponse.actual;
+		for (var i = 0 ; i < actual.length ; i++) {
+			var actualItem = actual[i];
+			var newRoleColumn = {};
+			newRoleColumn.columnName = '<column name>';
+			newRoleColumn.columnList = [];
+			actualItem.roleColumns.push(newRoleColumn);
+		}
+		this.setData(this.staffingActPlanResponse);
+		this.showTable();
+	},
+	
+	saveActualPlan : function() {
+		//synch column
+		var saveStaffingActPlanReqModel = this.getRequestModel(this.staffingActPlanResponse);
+		var self = this;
+        if(document.jsonConfig != null  && document.jsonConfig.presentationServiceHost) {
+            var defaultPresentationServiceHost = document.jsonConfig.presentationServiceHost;
+            var config = document.jsonConfig;
+            var dashboardSpinner = new Clazz.com.photon.DashboardSpinner();
+            dashboardSpinner.showSpinner();
+            var jiraAPI = new Clazz.com.photon.JiraAPI({});
+            jiraAPI.request(defaultPresentationServiceHost + config.dashboard + '/staffing_deficit', 'POST', JSON.stringify(saveStaffingActPlanReqModel),
+            function(response){ 
+            	self.successSaveStaffingActPlan(response);
+            }, 
+            function(){
+            	self.failedSaveStaffingActPlan();
+            	
+            });
+        }
+	},
+	
+	successSaveStaffingActPlan : function(){
+		var dashboardSpinner = new Clazz.com.photon.DashboardSpinner();
+		dashboardSpinner.hideSpinner();
+	},
+	
+	failedSaveStaffingActPlan : function(){
+		
+	},
+	
+	getRequestModel : function(staffingActPlanResponse) {
+		var model = {};
+		model['projectId'] = this.projectId;
+		model['plan'] = staffingActPlanResponse.plan;
+		var colHeadersResponse = this.staffingActPlanResponse.colHeaders;
+		var columnsHeader = this.data[0];
+		var newColumnHeaders = [];
+		for (var i = 0 ; i < columnsHeader.length ; i++) {
+			var columnItem = {};
+			if (columnsHeader[i] !== 'icon') {
+				columnItem.columnName = columnsHeader[i];
+				var index = i - parseInt(i / 2);
+				columnItem.columnId = (index < colHeadersResponse.length) ? colHeadersResponse[index].columnId : null;
+				newColumnHeaders.push(columnItem);
+			}
+		}
+		staffingActPlanResponse.colHeaders = newColumnHeaders;
+		model.colHeaders = newColumnHeaders;
+		model.actual = staffingActPlanResponse.actual;
+		return model;
+	}
+});
+
