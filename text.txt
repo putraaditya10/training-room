@@ -1,1 +1,6 @@
 percobaan ke 2
+
+Hari ini saya belajar tentang VCS dimana VCS terbagi atas 2 yaitu centralize dan Distributed
+Contoh Centralize adalah SVN sedangkan contoh Distributed adalah GIT
+
+
